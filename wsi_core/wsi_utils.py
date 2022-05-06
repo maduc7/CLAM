@@ -7,34 +7,40 @@ from PIL import Image
 import math
 import cv2
 
+
 def isWhitePatch(patch, satThresh=5):
     patch_hsv = cv2.cvtColor(patch, cv2.COLOR_RGB2HSV)
     return True if np.mean(patch_hsv[:,:,1]) < satThresh else False
 
+
 def isBlackPatch(patch, rgbThresh=40):
     return True if np.all(np.mean(patch, axis = (0,1)) < rgbThresh) else False
+
 
 def isBlackPatch_S(patch, rgbThresh=20, percentage=0.05):
     num_pixels = patch.size[0] * patch.size[1]
     return True if np.all(np.array(patch) < rgbThresh, axis=(2)).sum() > num_pixels * percentage else False
 
+
 def isWhitePatch_S(patch, rgbThresh=220, percentage=0.2):
     num_pixels = patch.size[0] * patch.size[1]
     return True if np.all(np.array(patch) > rgbThresh, axis=(2)).sum() > num_pixels * percentage else False
+
 
 def coord_generator(x_start, x_end, x_step, y_start, y_end, y_step, args_dict=None):
     for x in range(x_start, x_end, x_step):
         for y in range(y_start, y_end, y_step):
             if args_dict is not None:
                 process_dict = args_dict.copy()
-                process_dict.update({'pt':(x,y)})
+                process_dict.update({'pt': (x, y)})
                 yield process_dict
             else:
-                yield (x,y)
+                yield (x, y)
+
 
 def savePatchIter_bag_hdf5(patch):
     x, y, cont_idx, patch_level, downsample, downsampled_level_dim, level_dim, img_patch, name, save_path= tuple(patch.values())
-    img_patch = np.array(img_patch)[np.newaxis,...]
+    img_patch = np.array(img_patch)[np.newaxis, ...]
     img_shape = img_patch.shape
 
     file_path = os.path.join(save_path, name)+'.h5'
@@ -47,9 +53,10 @@ def savePatchIter_bag_hdf5(patch):
     if 'coords' in file:
         coord_dset = file['coords']
         coord_dset.resize(len(coord_dset) + img_shape[0], axis=0)
-        coord_dset[-img_shape[0]:] = (x,y)
+        coord_dset[-img_shape[0]:] = (x, y)
 
     file.close()
+
 
 def save_hdf5(output_path, asset_dict, attr_dict= None, mode='a'):
     file = h5py.File(output_path, mode)
@@ -72,11 +79,12 @@ def save_hdf5(output_path, asset_dict, attr_dict= None, mode='a'):
     file.close()
     return output_path
 
+
 def initialize_hdf5_bag(first_patch, save_coord=False):
     x, y, cont_idx, patch_level, downsample, downsampled_level_dim, level_dim, img_patch, name, save_path = tuple(first_patch.values())
     file_path = os.path.join(save_path, name)+'.h5'
     file = h5py.File(file_path, "w")
-    img_patch = np.array(img_patch)[np.newaxis,...]
+    img_patch = np.array(img_patch)[np.newaxis, ...]
     dtype = img_patch.dtype
 
     # Initialize a resizable dataset to hold the output
@@ -94,10 +102,11 @@ def initialize_hdf5_bag(first_patch, save_coord=False):
 
     if save_coord:
         coord_dset = file.create_dataset('coords', shape=(1, 2), maxshape=(None, 2), chunks=(1, 2), dtype=np.int32)
-        coord_dset[:] = (x,y)
+        coord_dset[:] = (x, y)
 
     file.close()
     return file_path
+
 
 def sample_indices(scores, k, start=0.48, end=0.52, convert_to_percentile=False, seed=1):
     np.random.seed(seed)
@@ -114,6 +123,7 @@ def sample_indices(scores, k, start=0.48, end=0.52, convert_to_percentile=False,
     else:
         return np.random.choice(indices, min(k, len(indices)), replace=False)
 
+
 def top_k(scores, k, invert=False):
     if invert:
         top_k_ids=scores.argsort()[:k]
@@ -121,10 +131,12 @@ def top_k(scores, k, invert=False):
         top_k_ids=scores.argsort()[::-1][:k]
     return top_k_ids
 
+
 def to_percentiles(scores):
     from scipy.stats import rankdata
     scores = rankdata(scores, 'average')/len(scores) * 100   
     return scores
+
 
 def screen_coords(scores, coords, top_left, bot_right):
     bot_right = np.array(bot_right)
@@ -134,7 +146,9 @@ def screen_coords(scores, coords, top_left, bot_right):
     coords = coords[mask]
     return scores, coords
 
-def sample_rois(scores, coords, k=5, mode='range_sample', seed=1, score_start=0.45, score_end=0.55, top_left=None, bot_right=None):
+
+def sample_rois(scores, coords, k=5, mode='range_sample', seed=1,
+                score_start=0.45, score_end=0.55, top_left=None, bot_right=None):
 
     if len(scores.shape) == 2:
         scores = scores.flatten()
@@ -144,7 +158,8 @@ def sample_rois(scores, coords, k=5, mode='range_sample', seed=1, score_start=0.
         scores, coords = screen_coords(scores, coords, top_left, bot_right)
 
     if mode == 'range_sample':
-        sampled_ids = sample_indices(scores, start=score_start, end=score_end, k=k, convert_to_percentile=False, seed=seed)
+        sampled_ids = sample_indices(scores, start=score_start, end=score_end,
+                                     k=k, convert_to_percentile=False, seed=seed)
     elif mode == 'topk':
         sampled_ids = top_k(scores, k, invert=False)
     elif mode == 'reverse_topk':
@@ -157,9 +172,14 @@ def sample_rois(scores, coords, k=5, mode='range_sample', seed=1, score_start=0.
     asset = {'sampled_coords': coords, 'sampled_scores': scores}
     return asset
 
-def DrawGrid(img, coord, shape, thickness=2, color=(0,0,0,255)):
-    cv2.rectangle(img, tuple(np.maximum([0, 0], coord-thickness//2)), tuple(coord - thickness//2 + np.array(shape)), (0, 0, 0, 255), thickness=thickness)
+
+def DrawGrid(img, coord, shape, thickness=2, color=(0, 0, 0, 255)):
+    cv2.rectangle(img,
+                  tuple(np.maximum([0, 0], coord-thickness//2)),
+                  tuple(coord - thickness//2 + np.array(shape)),
+                  (0, 0, 0, 255), thickness=thickness)
     return img
+
 
 def DrawMap(canvas, patch_dset, coords, patch_size, indices=None, verbose=1, draw_grid=True):
     if indices is None:
@@ -184,6 +204,7 @@ def DrawMap(canvas, patch_dset, coords, patch_size, indices=None, verbose=1, dra
             DrawGrid(canvas, coord, patch_size)
 
     return Image.fromarray(canvas)
+
 
 def DrawMapFromCoords(canvas, wsi_object, coords, patch_size, vis_level, indices=None, verbose=1, draw_grid=True):
     downsamples = wsi_object.wsi.level_downsamples[vis_level]
@@ -212,7 +233,8 @@ def DrawMapFromCoords(canvas, wsi_object, coords, patch_size, vis_level, indices
 
     return Image.fromarray(canvas)
 
-def StitchPatches(hdf5_file_path, downscale=16, draw_grid=False, bg_color=(0,0,0), alpha=-1):
+
+def StitchPatches(hdf5_file_path, downscale=16, draw_grid=False, bg_color=(0, 0, 0), alpha=-1):
     file = h5py.File(hdf5_file_path, 'r')
     dset = file['imgs']
     coords = file['coords'][:]
@@ -234,15 +256,16 @@ def StitchPatches(hdf5_file_path, downscale=16, draw_grid=False, bg_color=(0,0,0
         raise Image.DecompressionBombError("Visualization Downscale %d is too large" % downscale)
     
     if alpha < 0 or alpha == -1:
-        heatmap = Image.new(size=(w,h), mode="RGB", color=bg_color)
+        heatmap = Image.new(size=(w, h), mode="RGB", color=bg_color)
     else:
-        heatmap = Image.new(size=(w,h), mode="RGBA", color=bg_color + (int(255 * alpha),))
+        heatmap = Image.new(size=(w, h), mode="RGBA", color=bg_color + (int(255 * alpha),))
     
     heatmap = np.array(heatmap)
     heatmap = DrawMap(heatmap, dset, coords, downscaled_shape, indices=None, draw_grid=draw_grid)
     
     file.close()
     return heatmap
+
 
 def StitchCoords(hdf5_file_path, wsi_object, downscale=16, draw_grid=False, bg_color=(0,0,0), alpha=-1):
     wsi = wsi_object.getOpenSlide()
@@ -280,6 +303,7 @@ def StitchCoords(hdf5_file_path, wsi_object, downscale=16, draw_grid=False, bg_c
     file.close()
     return heatmap
 
+
 def SamplePatches(coords_file_path, save_file_path, wsi_object, 
     patch_level=0, custom_downsample=1, patch_size=256, sample_num=100, seed=1, stitch=True, verbose=1, mode='w'):
     file = h5py.File(coords_file_path, 'r')
@@ -308,7 +332,8 @@ def SamplePatches(coords_file_path, save_file_path, wsi_object,
         target_patch_size = (np.array([patch_size, patch_size]) / custom_downsample).astype(np.int32)
         
     if stitch:
-        canvas = Mosaic_Canvas(patch_size=target_patch_size[0], n=sample_num, downscale=4, n_per_row=10, bg_color=(0,0,0), alpha=-1)
+        canvas = Mosaic_Canvas(patch_size=target_patch_size[0], n=sample_num,
+                               downscale=4, n_per_row=10, bg_color=(0, 0, 0), alpha=-1)
     else:
         canvas = None
     
@@ -329,3 +354,158 @@ def SamplePatches(coords_file_path, save_file_path, wsi_object,
         mode='a'
 
     return canvas, len(coords), len(indices)
+
+
+def filter_red(np_img: np.ndarray,
+               red_lower_thresh: int,
+               green_upper_thresh: int,
+               blue_upper_thresh: int
+               ) -> np.ndarray:
+    # https://github.com/deroneriksson/python-wsi-preprocessing/blob/master/deephistopath/wsi/filter.py
+    # 771 to 802 (modified)
+    """
+    Create a mask to filter out reddish colors, where the mask is based on a pixel being above a
+    red channel threshold value, below a green channel threshold value, and below a blue channel threshold value.
+    :param np_img: GB image as a NumPy array.
+    :param red_lower_thresh: Red channel lower threshold value.
+    :param green_upper_thresh: Green channel upper threshold value.
+    :param blue_upper_thresh: Blue channel upper threshold value.
+    :return: NumPy array representing the mask.
+    """
+    r = np_img[:, :, 0] > red_lower_thresh
+    g = np_img[:, :, 1] < green_upper_thresh
+    b = np_img[:, :, 2] < blue_upper_thresh
+    return ~(r & g & b)
+
+
+def filter_red_pen(np_img: np.ndarray
+                   ) -> np.ndarray:
+    # https://github.com/deroneriksson/python-wsi-preprocessing/blob/master/deephistopath/wsi/filter.py
+    # 805 to 833
+    """
+    Create a mask to filter out red pen marks from a slide.
+    :param np_img: RGB image as a NumPy array.
+    :return: NumPy array representing the mask.
+    """
+    result = filter_red(np_img, red_lower_thresh=150, green_upper_thresh=80, blue_upper_thresh=90) & \
+             filter_red(np_img, red_lower_thresh=110, green_upper_thresh=20, blue_upper_thresh=30) & \
+             filter_red(np_img, red_lower_thresh=185, green_upper_thresh=65, blue_upper_thresh=105) & \
+             filter_red(np_img, red_lower_thresh=195, green_upper_thresh=85, blue_upper_thresh=125) & \
+             filter_red(np_img, red_lower_thresh=220, green_upper_thresh=115, blue_upper_thresh=145) & \
+             filter_red(np_img, red_lower_thresh=125, green_upper_thresh=40, blue_upper_thresh=70) & \
+             filter_red(np_img, red_lower_thresh=200, green_upper_thresh=120, blue_upper_thresh=150) & \
+             filter_red(np_img, red_lower_thresh=100, green_upper_thresh=50, blue_upper_thresh=65) & \
+             filter_red(np_img, red_lower_thresh=85, green_upper_thresh=25, blue_upper_thresh=45)
+    return result
+
+
+def filter_green(np_img: np.ndarray,
+                 red_upper_thresh: int,
+                 green_lower_thresh: int,
+                 blue_lower_thresh: int,
+                 ) -> np.ndarray:
+    # https://github.com/deroneriksson/python-wsi-preprocessing/blob/master/deephistopath/wsi/filter.py
+    # 836 to 869
+    """
+    :param np_img: RGB image as a NumPy array.
+    :param red_upper_thresh: Red channel upper threshold value.
+    :param green_lower_thresh: Green channel lower threshold value.
+    :param blue_lower_thresh: Blue channel lower threshold value.
+    :return: NumPy array representing the mask.
+    """
+    r = np_img[:, :, 0] < red_upper_thresh
+    g = np_img[:, :, 1] > green_lower_thresh
+    b = np_img[:, :, 2] > blue_lower_thresh
+    return ~(r & g & b)
+
+
+def filter_green_pen(np_img: np.ndarray,
+                     ) -> np.ndarray:
+    # https://github.com/deroneriksson/python-wsi-preprocessing/blob/master/deephistopath/wsi/filter.py
+    # 872 to 906
+    """
+    Create a mask to filter out green pen marks from a slide.
+    :param np_img: RGB image as a NumPy array.
+    :return: NumPy array representing the mask.
+    """
+    result = filter_green(np_img, red_upper_thresh=150, green_lower_thresh=160, blue_lower_thresh=140) & \
+             filter_green(np_img, red_upper_thresh=70, green_lower_thresh=110, blue_lower_thresh=110) & \
+             filter_green(np_img, red_upper_thresh=45, green_lower_thresh=115, blue_lower_thresh=100) & \
+             filter_green(np_img, red_upper_thresh=30, green_lower_thresh=75, blue_lower_thresh=60) & \
+             filter_green(np_img, red_upper_thresh=195, green_lower_thresh=220, blue_lower_thresh=210) & \
+             filter_green(np_img, red_upper_thresh=225, green_lower_thresh=230, blue_lower_thresh=225) & \
+             filter_green(np_img, red_upper_thresh=170, green_lower_thresh=210, blue_lower_thresh=200) & \
+             filter_green(np_img, red_upper_thresh=20, green_lower_thresh=30, blue_lower_thresh=20) & \
+             filter_green(np_img, red_upper_thresh=50, green_lower_thresh=60, blue_lower_thresh=40) & \
+             filter_green(np_img, red_upper_thresh=30, green_lower_thresh=50, blue_lower_thresh=35) & \
+             filter_green(np_img, red_upper_thresh=65, green_lower_thresh=70, blue_lower_thresh=60) & \
+             filter_green(np_img, red_upper_thresh=100, green_lower_thresh=110, blue_lower_thresh=105) & \
+             filter_green(np_img, red_upper_thresh=165, green_lower_thresh=180, blue_lower_thresh=180) & \
+             filter_green(np_img, red_upper_thresh=140, green_lower_thresh=140, blue_lower_thresh=150) & \
+             filter_green(np_img, red_upper_thresh=185, green_lower_thresh=195, blue_lower_thresh=195)
+    return result
+
+
+def filter_blue(np_img: np.ndarray,
+                red_upper_thresh: int,
+                green_upper_thresh: int,
+                blue_lower_thresh: int
+                ) -> np.ndarray:
+    # https://github.com/deroneriksson/python-wsi-preprocessing/blob/master/deephistopath/wsi/filter.py
+    # 909 to 940
+    """
+    Create a mask to filter out blueish colors, where the mask is based on a pixel being below a
+    red channel threshold value, below a green channel threshold value, and above a blue channel threshold value.
+    :param np_img: RGB image as a NumPy array.
+    :param red_upper_thresh: Red channel upper threshold value.
+    :param green_upper_thresh:  Green channel upper threshold value.
+    :param blue_lower_thresh: Blue channel lower threshold value.
+    :return: NumPy array representing the mask.
+    """
+    r = np_img[:, :, 0] < red_upper_thresh
+    g = np_img[:, :, 1] < green_upper_thresh
+    b = np_img[:, :, 2] > blue_lower_thresh
+    return ~(r & g & b)
+
+
+def filter_blue_pen(np_img: np.ndarray
+                    ) -> np.ndarray:
+    # https://github.com/deroneriksson/python-wsi-preprocessing/blob/master/deephistopath/wsi/filter.py
+    # 943 to 974
+    """
+    Create a mask to filter out blue pen marks from a slide.
+    :param np_img: RGB image as a NumPy array.
+    :return: NumPy array representing the mask.
+    """
+    result = filter_blue(np_img, red_upper_thresh=60, green_upper_thresh=120, blue_lower_thresh=190) & \
+             filter_blue(np_img, red_upper_thresh=120, green_upper_thresh=170, blue_lower_thresh=200) & \
+             filter_blue(np_img, red_upper_thresh=175, green_upper_thresh=210, blue_lower_thresh=230) & \
+             filter_blue(np_img, red_upper_thresh=145, green_upper_thresh=180, blue_lower_thresh=210) & \
+             filter_blue(np_img, red_upper_thresh=37, green_upper_thresh=95, blue_lower_thresh=160) & \
+             filter_blue(np_img, red_upper_thresh=30, green_upper_thresh=65, blue_lower_thresh=130) & \
+             filter_blue(np_img, red_upper_thresh=130, green_upper_thresh=155, blue_lower_thresh=180) & \
+             filter_blue(np_img, red_upper_thresh=40, green_upper_thresh=35, blue_lower_thresh=85) & \
+             filter_blue(np_img, red_upper_thresh=30, green_upper_thresh=20, blue_lower_thresh=65) & \
+             filter_blue(np_img, red_upper_thresh=90, green_upper_thresh=90, blue_lower_thresh=140) & \
+             filter_blue(np_img, red_upper_thresh=60, green_upper_thresh=60, blue_lower_thresh=120) & \
+             filter_blue(np_img, red_upper_thresh=110, green_upper_thresh=110, blue_lower_thresh=175)
+    return result
+
+
+def filter_grays(np_img: np.ndarray,
+                 tolerance: int = 15
+                 ) -> np.ndarray:
+    # https://github.com/deroneriksson/python-wsi-preprocessing/blob/master/deephistopath/wsi/filter.py
+    # 977 to 1005
+    """
+    Create a mask to filter out pixels where the red, green, and blue channel values are similar.
+    :param np_img: RGB image as a NumPy array.
+    :param tolerance: Tolerance value to determine how similar the values must be in order to be filtered out
+    :return: NumPy array representing a mask where pixels with similar red, green, and blue values have been masked out.
+    """
+    np_img = np_img.astype(np.int)
+    rg_diff = abs(np_img[:, :, 0] - np_img[:, :, 1]) <= tolerance
+    rb_diff = abs(np_img[:, :, 0] - np_img[:, :, 2]) <= tolerance
+    gb_diff = abs(np_img[:, :, 1] - np_img[:, :, 2]) <= tolerance
+
+    return ~(rg_diff & rb_diff & gb_diff)

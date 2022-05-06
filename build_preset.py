@@ -12,6 +12,7 @@ parser.add_argument('--sthresh', type=int, default=8,
 					help='segmentation threshold')
 parser.add_argument('--mthresh', type=int, default=7, 
 					help='median filter threshold')
+parser.add_argument('--filter_pen', action='store_true', default=True)
 parser.add_argument('--use_otsu', action='store_true', default=False)
 parser.add_argument('--close', type=int, default=4, 
 					help='additional morphological closing')
@@ -37,7 +38,8 @@ parser.add_argument('--contour_fn', type=str, choices=['four_pt', 'center', 'bas
 if __name__ == '__main__':
 	args = parser.parse_args()
 	seg_params = {'seg_level': args.seg_level, 'sthresh': args.sthresh, 'mthresh': args.mthresh, 
-				  'close': args.close, 'use_otsu': args.use_otsu, 'keep_ids': 'none', 'exclude_ids': 'none'}
+				  'close': args.close, 'filter_pen': args.filter_pen, 'use_otsu': args.use_otsu,
+				  'keep_ids': 'none', 'exclude_ids': 'none'}
 	filter_params = {'a_t':args.a_t, 'a_h': args.a_h, 'max_n_holes': args.max_n_holes}
 	vis_params = {'vis_level': args.vis_level, 'line_thickness': args.line_thickness}
 	patch_params = {'white_thresh': args.white_thresh, 'black_thresh': args.black_thresh, 

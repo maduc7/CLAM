@@ -12,7 +12,8 @@ from PIL import Image
 import pdb
 import h5py
 import math
-from wsi_core.wsi_utils import savePatchIter_bag_hdf5, initialize_hdf5_bag, coord_generator, save_hdf5, sample_indices, screen_coords, isBlackPatch, isWhitePatch, to_percentiles
+from wsi_core.wsi_utils import savePatchIter_bag_hdf5, initialize_hdf5_bag, coord_generator, save_hdf5, sample_indices, \
+    screen_coords, isBlackPatch, isWhitePatch, to_percentiles, filter_grays, filter_blue_pen, filter_red_pen, filter_green_pen
 import itertools
 from wsi_core.util_classes import isInContourV1, isInContourV2, isInContourV3_Easy, isInContourV3_Hard, Contour_Checking_fn
 from utils.file_utils import load_pkl, save_pkl
@@ -73,7 +74,7 @@ class WholeSlideImage(object):
         with open(annot_path, "r") as f:
             annot = f.read()
             annot = eval(annot)
-        self.contours_tumor  = _create_contours_from_dict(annot)
+        self.contours_tumor = _create_contours_from_dict(annot)
         self.contours_tumor = sorted(self.contours_tumor, key=cv2.contourArea, reverse=True)
 
     def initSegmentation(self, mask_file):
@@ -88,12 +89,14 @@ class WholeSlideImage(object):
         asset_dict = {'holes': self.holes_tissue, 'tissue': self.contours_tissue}
         save_pkl(mask_file, asset_dict)
 
-    def segmentTissue(self, seg_level=0, sthresh=20, sthresh_up = 255, mthresh=7, close = 0, use_otsu=False, 
-                            filter_params={'a_t':100}, ref_patch_size=512, exclude_ids=[], keep_ids=[]):
+    def segmentTissue(self,
+                      seg_level=0, sthresh=20, sthresh_up=255, mthresh=7, close=0, filter_pen=True, use_otsu=False,
+                      filter_params={'a_t': 100}, ref_patch_size=512, exclude_ids=[], keep_ids=[]):
         """
             Segment the tissue via HSV -> Median thresholding -> Binary threshold
+            ADD: ignore pen drawing (reg, green, blue, black)
         """
-        
+
         def _filter_contours(contours, hierarchy, filter_params):
             """
                 Filter contours by: area.
@@ -121,7 +124,6 @@ class WholeSlideImage(object):
                     filtered.append(cont_idx)
                     all_holes.append(holes)
 
-
             foreground_contours = [contours[cont_idx] for cont_idx in filtered]
             
             hole_contours = []
@@ -142,11 +144,10 @@ class WholeSlideImage(object):
 
             return foreground_contours, hole_contours
         
-        img = np.array(self.wsi.read_region((0,0), seg_level, self.level_dim[seg_level]))
+        img = np.array(self.wsi.read_region((0, 0), seg_level, self.level_dim[seg_level]))
         img_hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)  # Convert to HSV space
-        img_med = cv2.medianBlur(img_hsv[:,:,1], mthresh)  # Apply median blurring
-        
-       
+        img_med = cv2.medianBlur(img_hsv[:, :, 1], mthresh)  # Apply median blurring
+
         # Thresholding
         if use_otsu:
             _, img_otsu = cv2.threshold(img_med, 0, sthresh_up, cv2.THRESH_OTSU+cv2.THRESH_BINARY)
@@ -156,7 +157,26 @@ class WholeSlideImage(object):
         # Morphological closing
         if close > 0:
             kernel = np.ones((close, close), np.uint8)
-            img_otsu = cv2.morphologyEx(img_otsu, cv2.MORPH_CLOSE, kernel)                 
+            img_otsu = cv2.morphologyEx(img_otsu, cv2.MORPH_CLOSE, kernel)
+
+        # filter pen removed
+        if filter_pen:
+            # detect gray pixels (also black)
+            np_rgb_no_gray = filter_grays(img[:, :, :3])
+            # detect blue pen
+            np_rgb_no_blue = filter_blue_pen(img[:, :, :3])
+            # detect green pen
+            np_rgb_no_green = filter_green_pen(img[:, :, :3])
+            # detect red pen
+            np_rgb_no_red = filter_red_pen(img[:, :, :3])
+            # gray image without the red, blue, green and black pen marks
+            # replace pixels with black pixels
+            img_otsu = np.where(np_rgb_no_gray, img_otsu, 0)
+            img_otsu = np.where(np_rgb_no_blue, img_otsu, 0)
+            img_otsu = np.where(np_rgb_no_green, img_otsu, 0)
+            img_otsu = np.where(np_rgb_no_red, img_otsu, 0)
+
+        #(Image.fromarray(img_otsu).convert("L")).save("test_otsu_after.tiff", "tiff")
 
         scale = self.level_downsamples[seg_level]
         scaled_ref_patch_area = int(ref_patch_size**2 / (scale[0] * scale[1]))
@@ -181,7 +201,7 @@ class WholeSlideImage(object):
         self.contours_tissue = [self.contours_tissue[i] for i in contour_ids]
         self.holes_tissue = [self.holes_tissue[i] for i in contour_ids]
 
-    def visWSI(self, vis_level=0, color = (0,255,0), hole_color = (0,0,255), annot_color=(255,0,0), 
+    def visWSI(self, vis_level=0, color=(0, 255, 0), hole_color=(0, 0, 255), annot_color=(255, 0, 0),
                     line_thickness=250, max_size=None, top_left=None, bot_right=None, custom_downsample=1, view_slide_only=False,
                     number_contours=False, seg_display=True, annot_display=True):
         
@@ -207,7 +227,7 @@ class WholeSlideImage(object):
                     cv2.drawContours(img, self.scaleContourDim(self.contours_tissue, scale), 
                                      -1, color, line_thickness, lineType=cv2.LINE_8, offset=offset)
 
-                else: # add numbering to each contour
+                else:  # add numbering to each contour
                     for idx, cont in enumerate(self.contours_tissue):
                         contour = np.array(self.scaleContourDim(cont, scale))
                         M = cv2.moments(contour)
@@ -215,8 +235,7 @@ class WholeSlideImage(object):
                         cY = int(M["m01"] / (M["m00"] + 1e-9))
                         # draw the contour and put text next to center
                         cv2.drawContours(img,  [contour], -1, color, line_thickness, lineType=cv2.LINE_8, offset=offset)
-                        cv2.putText(img, "{}".format(idx), (cX, cY),
-                                cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 10)
+                        cv2.putText(img, "{}".format(idx), (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 10)
 
                 for holes in self.holes_tissue:
                     cv2.drawContours(img, self.scaleContourDim(holes, scale), 
@@ -237,7 +256,6 @@ class WholeSlideImage(object):
             img = img.resize((int(w*resizeFactor), int(h*resizeFactor)))
        
         return img
-
 
     def createPatches_bag_hdf5(self, save_path, patch_level=0, patch_size=256, step_size=256, save_coord=True, **kwargs):
         contours = self.contours_tissue
@@ -263,7 +281,6 @@ class WholeSlideImage(object):
                 savePatchIter_bag_hdf5(patch)
 
         return self.hdf5_file
-
 
     def _getPatchGenerator(self, cont, cont_idx, patch_level, save_path, patch_size=256, step_size=256, custom_downsample=1,
         white_black=True, white_thresh=15, black_thresh=50, contour_fn='four_pt', use_padding=True):
@@ -312,11 +329,11 @@ class WholeSlideImage(object):
         for y in range(start_y, stop_y, step_size_y):
             for x in range(start_x, stop_x, step_size_x):
 
-                if not self.isInContours(cont_check_fn, (x,y), self.holes_tissue[cont_idx], ref_patch_size[0]): #point not inside contour and its associated holes
+                if not self.isInContours(cont_check_fn, (x,y), self.holes_tissue[cont_idx], ref_patch_size[0]):  # point not inside contour and its associated holes
                     continue    
                 
-                count+=1
-                patch_PIL = self.wsi.read_region((x,y), patch_level, (patch_size, patch_size)).convert('RGB')
+                count += 1
+                patch_PIL = self.wsi.read_region((x, y), patch_level, (patch_size, patch_size)).convert('RGB')
                 if custom_downsample > 1:
                     patch_PIL = patch_PIL.resize((target_patch_size, target_patch_size))
                 
@@ -324,9 +341,9 @@ class WholeSlideImage(object):
                     if isBlackPatch(np.array(patch_PIL), rgbThresh=black_thresh) or isWhitePatch(np.array(patch_PIL), satThresh=white_thresh): 
                         continue
 
-                patch_info = {'x':x // (patch_downsample[0] * custom_downsample), 'y':y // (patch_downsample[1] * custom_downsample), 'cont_idx':cont_idx, 'patch_level':patch_level, 
+                patch_info = {'x': x // (patch_downsample[0] * custom_downsample), 'y': y // (patch_downsample[1] * custom_downsample), 'cont_idx': cont_idx, 'patch_level': patch_level,
                 'downsample': self.level_downsamples[patch_level], 'downsampled_level_dim': tuple(np.array(self.level_dim[patch_level])//custom_downsample), 'level_dim': self.level_dim[patch_level],
-                'patch_PIL':patch_PIL, 'name':self.name, 'save_path':save_path}
+                'patch_PIL': patch_PIL, 'name': self.name, 'save_path': save_path}
 
                 yield patch_info
 
@@ -390,8 +407,7 @@ class WholeSlideImage(object):
 
         return self.hdf5_file
 
-
-    def process_contour(self, cont, contour_holes, patch_level, save_path, patch_size = 256, step_size = 256,
+    def process_contour(self, cont, contour_holes, patch_level, save_path, patch_size=256, step_size=256,
         contour_fn='four_pt', use_padding=True, top_left=None, bot_right=None):
         start_x, start_y, w, h = cv2.boundingRect(cont) if cont is not None else (0, 0, self.level_dim[patch_level][0], self.level_dim[patch_level][1])
 
@@ -439,7 +455,6 @@ class WholeSlideImage(object):
             assert isinstance(contour_fn, Contour_Checking_fn)
             cont_check_fn = contour_fn
 
-        
         step_size_x = step_size * patch_downsample[0]
         step_size_y = step_size * patch_downsample[1]
 
@@ -461,17 +476,17 @@ class WholeSlideImage(object):
         print('Extracted {} coordinates'.format(len(results)))
 
         if len(results)>1:
-            asset_dict = {'coords' :          results}
+            asset_dict = {'coords':          results}
             
-            attr = {'patch_size' :            patch_size, # To be considered...
-                    'patch_level' :           patch_level,
-                    'downsample':             self.level_downsamples[patch_level],
-                    'downsampled_level_dim' : tuple(np.array(self.level_dim[patch_level])),
-                    'level_dim':              self.level_dim[patch_level],
-                    'name':                   self.name,
-                    'save_path':              save_path}
+            attr = {'patch_size':            patch_size, # To be considered...
+                    'patch_level':           patch_level,
+                    'downsample':            self.level_downsamples[patch_level],
+                    'downsampled_level_dim': tuple(np.array(self.level_dim[patch_level])),
+                    'level_dim':             self.level_dim[patch_level],
+                    'name':                  self.name,
+                    'save_path':             save_path}
 
-            attr_dict = { 'coords' : attr}
+            attr_dict = {'coords': attr}
             return asset_dict, attr_dict
 
         else:
@@ -493,9 +508,8 @@ class WholeSlideImage(object):
                    convert_to_percentiles=False, 
                    binarize=False, thresh=0.5,
                    max_size=None,
-                   custom_downsample = 1,
+                   custom_downsample=1,
                    cmap='coolwarm'):
-
         """
         Args:
             scores (numpy array of float): Attention scores 
@@ -522,7 +536,7 @@ class WholeSlideImage(object):
             vis_level = self.wsi.get_best_level_for_downsample(32)
 
         downsample = self.level_downsamples[vis_level]
-        scale = [1/downsample[0], 1/downsample[1]] # Scaling from 0 to desired level
+        scale = [1/downsample[0], 1/downsample[1]]  # Scaling from 0 to desired level
                 
         if len(scores.shape) == 2:
             scores = scores.flatten()
@@ -532,7 +546,7 @@ class WholeSlideImage(object):
                 threshold = 1.0/len(scores)
                 
             else:
-                threshold =  thresh
+                threshold = thresh
         
         else:
             threshold = 0.0
@@ -548,11 +562,11 @@ class WholeSlideImage(object):
 
         else:
             region_size = self.level_dim[vis_level]
-            top_left = (0,0)
+            top_left = (0, 0)
             bot_right = self.level_dim[0]
             w, h = region_size
 
-        patch_size  = np.ceil(np.array(patch_size) * np.array(scale)).astype(int)
+        patch_size = np.ceil(np.array(patch_size) * np.array(scale)).astype(int)
         coords = np.ceil(coords * np.array(scale)).astype(int)
         
         print('\ncreating heatmap for: ')
@@ -579,8 +593,8 @@ class WholeSlideImage(object):
             coord = coords[idx]
             if score >= threshold:
                 if binarize:
-                    score=1.0
-                    count+=1
+                    score = 1.0
+                    count += 1
             else:
                 score=0.0
             # accumulate attention
@@ -601,7 +615,7 @@ class WholeSlideImage(object):
             overlay[~zero_mask] = overlay[~zero_mask] / counter[~zero_mask]
         del counter 
         if blur:
-            overlay = cv2.GaussianBlur(overlay,tuple((patch_size * (1-overlap)).astype(int) * 2 +1),0)  
+            overlay = cv2.GaussianBlur(overlay, tuple((patch_size * (1-overlap)).astype(int) * 2 + 1), 0)
 
         if segment:
             tissue_mask = self.get_seg_mask(region_size, scale, use_holes=use_holes, offset=tuple(top_left))
@@ -638,7 +652,7 @@ class WholeSlideImage(object):
                 img_block = img[coord[1]:coord[1]+patch_size[1], coord[0]:coord[0]+patch_size[0]].copy()
 
                 # color block (cmap applied to attention block)
-                color_block = (cmap(raw_block) * 255)[:,:,:3].astype(np.uint8)
+                color_block = (cmap(raw_block) * 255)[:, :, :3].astype(np.uint8)
 
                 if segment:
                     # tissue mask block
@@ -657,10 +671,11 @@ class WholeSlideImage(object):
         del overlay
 
         if blur:
-            img = cv2.GaussianBlur(img,tuple((patch_size * (1-overlap)).astype(int) * 2 +1),0)  
+            img = cv2.GaussianBlur(img, tuple((patch_size * (1-overlap)).astype(int) * 2 + 1), 0)
 
         if alpha < 1.0:
-            img = self.block_blending(img, vis_level, top_left, bot_right, alpha=alpha, blank_canvas=blank_canvas, block_size=1024)
+            img = self.block_blending(img, vis_level, top_left, bot_right, alpha=alpha,
+                                      blank_canvas=blank_canvas, block_size=1024)
         
         img = Image.fromarray(img)
         w, h = img.size
@@ -673,7 +688,6 @@ class WholeSlideImage(object):
             img = img.resize((int(w*resizeFactor), int(h*resizeFactor)))
        
         return img
-
     
     def block_blending(self, img, vis_level, top_left, bot_right, alpha=0.5, blank_canvas=False, block_size=1024):
         print('\ncomputing blend')
